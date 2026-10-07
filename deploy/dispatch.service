@@ -1,0 +1,14 @@
+[Unit]
+Description=Dispatch scheduled Claude Code messages
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/workspace/dev/dispatch/main
+Environment=PATH=/root/.local/bin:/root/.nvm/versions/node/v24.19.0/bin:/usr/local/bin:/usr/bin
+ExecStart=/root/.nvm/versions/node/v24.19.0/bin/node /root/workspace/dev/dispatch/main/dist/main.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
