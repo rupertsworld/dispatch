@@ -1,6 +1,12 @@
+<img src="https://raw.githubusercontent.com/rupertsworld/dispatch/main/assets/dispatch-mark.svg" alt="Dispatch logo" width="56" height="56">
+
 # Dispatch
 
-Dispatch is an MCP server that schedules work for a running coding agent by sending it a message at the right time. Ask your agent to review your tasks every morning or check on a long-running build in 20 minutes. Dispatch currently works with Claude Code; other agents and job types are planned.
+Dispatch is an MCP server that sends messages to a running coding agent, on a schedule or when an app asks it to. Ask for a task review each morning, or connect a task list so checking off an item prompts a follow-up. Dispatch currently works with Claude Code; other agents and job types are planned.
+
+![An illustrated Today list sends a completed task to Claude Code, which adds a follow-up task.](https://raw.githubusercontent.com/rupertsworld/dispatch/main/assets/dispatch-demo.gif)
+
+The Today list in the animation is an example app using Dispatch to send a message when a task is checked off.
 
 ## Get Started
 
