@@ -1,6 +1,4 @@
-<img src="https://raw.githubusercontent.com/rupertsworld/dispatch/main/assets/dispatch-mark.svg" alt="Dispatch logo" width="56" height="56">
-
-# Dispatch
+# <img src="https://raw.githubusercontent.com/rupertsworld/dispatch/main/assets/dispatch-mark.svg" alt="" width="44" height="44"> Dispatch
 
 Dispatch is an MCP server that sends messages to a running coding agent, on a schedule or when an app asks it to. Ask for a task review each morning, or connect a task list so checking off an item prompts a follow-up. Dispatch currently works with Claude Code; other agents and job types are planned.
 
@@ -15,6 +13,14 @@ With Node.js 20 or newer, start the published package in one terminal:
 ```sh
 npx @rupertsworld/dispatch
 ```
+
+On macOS or Linux, use this instead to keep it running after closing the terminal:
+
+```sh
+nohup npx --yes @rupertsworld/dispatch > "$HOME/dispatch.log" 2>&1 </dev/null &
+```
+
+Output goes to `~/dispatch.log`. This process will not restart automatically after a crash or reboot; use a service manager if you need that.
 
 In another terminal, register it with Claude Code:
 
@@ -38,7 +44,7 @@ $ claude
 ● Hello world.
 ```
 
-Keep both the Dispatch terminal and the receiving session open until the message arrives. If several sessions are running, Claude Code may ask which one to target. It may also add its own sender and safety text.
+Keep Dispatch running and the receiving session open until the message arrives. If several sessions are running, Claude Code may ask which one to target. It may also add its own sender and safety text.
 
 ## Jobs
 
