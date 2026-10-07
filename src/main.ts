@@ -12,6 +12,7 @@ import { FileStorage } from './storage.js';
 async function main(): Promise<void> {
   const token = process.env.DISPATCH_TOKEN;
   if (token === '') throw new Error('DISPATCH_TOKEN must not be empty');
+  const browserOrigin = process.env.DISPATCH_BROWSER_ORIGIN;
 
   const configDir = process.env.DISPATCH_CONFIG_DIR
     ?? join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'dispatch');
@@ -23,10 +24,10 @@ async function main(): Promise<void> {
   }
 
   const jobs = new DispatchJobs(new FileStorage(configDir, dataDir), submitMessage);
-  await jobs.start();
-  const { app, close } = createDispatchApp(jobs, listSessions, token);
+  const { app, close } = createDispatchApp(jobs, listSessions, submitMessage, { token, browserOrigin });
   const server = createServer(app);
   try {
+    await jobs.start();
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);
       server.once('error', onError);

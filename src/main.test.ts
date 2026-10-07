@@ -27,6 +27,7 @@ test('the server starts without a token and retains jobs across process restarts
     DISPATCH_PORT: String(port),
   };
   delete environment.DISPATCH_TOKEN;
+  delete environment.DISPATCH_BROWSER_ORIGIN;
   let child: ChildProcess | undefined;
 
   try {
@@ -37,6 +38,14 @@ test('the server starts without a token and retains jobs across process restarts
 
     const sessions = await call(port, 'tools/call', { name: 'list_sessions', arguments: {} });
     assert.deepEqual(JSON.parse(sessions.body.result.content[0]!.text), []);
+
+    const immediate = await fetch(`http://127.0.0.1:${port}/sessions/missing-session/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'Hello Claude' }),
+    });
+    assert.equal(immediate.status, 503);
+    assert.match((await immediate.json() as { error: string }).error, /matching Claude session record/);
 
     const created = await call(port, 'tools/call', { name: 'create_job', arguments: {
       trigger: { kind: 'once', at: new Date(Date.now() + 3_600_000).toISOString() },

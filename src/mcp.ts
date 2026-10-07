@@ -1,10 +1,10 @@
-/** Exposes Dispatch's job operations as local Streamable HTTP MCP tools. */
+/** Exposes scheduled jobs through MCP and immediate messages through HTTP. */
 
 import { timingSafeEqual } from 'node:crypto';
 import { createMcpExpressApp } from '@modelcontextprotocol/express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
-import type { Express } from 'express';
+import type { Express, RequestHandler } from 'express';
 import * as z from 'zod/v4';
 import type { DispatchJobs } from './jobs.js';
 import type { SessionSummary } from './types.js';
@@ -15,14 +15,28 @@ const triggerSchema = z.discriminatedUnion('kind', [
 ]);
 const actionSchema = z.object({ session_id: z.string().min(1), text: z.string().min(1) });
 const idSchema = z.object({ id: z.string().min(1) });
+const messageSchema = z.object({ text: z.string().min(1) });
+const messagePath = '/sessions/:sessionId/messages';
+
+interface DispatchHttpOptions {
+  token?: string;
+  browserOrigin?: string;
+}
 
 /** Builds a local MCP app around the single process that owns Dispatch jobs. */
 export function createDispatchApp(
   jobs: DispatchJobs,
   listSessions: () => Promise<SessionSummary[]>,
-  token?: string,
+  submitMessage: (sessionId: string, text: string) => Promise<void>,
+  options: DispatchHttpOptions = {},
 ): { app: Express; close: () => Promise<void> } {
+  const { token, browserOrigin } = options;
   if (token === '') throw new Error('Dispatch token must not be empty');
+  if (browserOrigin === '') throw new Error('Browser origin must not be empty');
+  const browserUrl = browserOrigin === undefined ? undefined : new URL(browserOrigin);
+  if (browserUrl && (!['http:', 'https:'].includes(browserUrl.protocol) || browserUrl.origin !== browserOrigin)) {
+    throw new Error('Browser origin must be an HTTP origin without a path');
+  }
 
   const handler = createMcpHandler(() => {
     const server = new McpServer({ name: 'dispatch', version: '0.1.0' });
@@ -67,13 +81,47 @@ export function createDispatchApp(
     return server;
   });
 
-  const app = createMcpExpressApp();
-  const nodeHandler = toNodeHandler(handler);
-  app.all('/mcp', (request, response, next) => {
+  const app = createMcpExpressApp(browserUrl ? {
+    allowedOrigins: ['localhost', '127.0.0.1', '[::1]', browserUrl.hostname],
+  } : undefined);
+  const authorize: RequestHandler = (request, response, next) => {
     if (token !== undefined && !hasToken(request.headers.authorization, token)) {
       response.status(401).json({ error: 'Unauthorized' });
       return;
     }
+    next();
+  };
+
+  // The browser route accepts one configured origin. The credential, if set,
+  // remains required on POST; preflight requests never include it.
+  app.use(messagePath, (request, response, next) => {
+    response.vary('Origin');
+    if (browserOrigin && request.headers.origin === browserOrigin) {
+      response.set('Access-Control-Allow-Origin', browserOrigin);
+      response.set('Access-Control-Allow-Methods', 'POST');
+      response.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    }
+    next();
+  });
+  app.options(messagePath, (_request, response) => {
+    response.status(204).end();
+  });
+  app.post(messagePath, authorize, async (request, response) => {
+    const message = messageSchema.safeParse(request.body);
+    const sessionId = request.params.sessionId;
+    if (!message.success || typeof sessionId !== 'string' || sessionId.length === 0) {
+      response.status(400).json({ error: 'Message text and session ID must be nonempty strings' });
+      return;
+    }
+    try {
+      await submitMessage(sessionId, message.data.text);
+      response.status(202).json({ status: 'submitted' });
+    } catch (error) {
+      response.status(503).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+  const nodeHandler = toNodeHandler(handler);
+  app.all('/mcp', authorize, (request, response, next) => {
     void nodeHandler(request, response, request.body).catch(next);
   });
   return { app, close: () => handler.close() };

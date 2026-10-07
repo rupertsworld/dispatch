@@ -31,7 +31,7 @@ test('MCP tools create, run, inspect, and delete a one-time job', async () => {
     return [{
       session_id: 'session-1', name: 'Test', cwd: '/tmp', status: 'idle', availability: 'available',
     }];
-  });
+  }, async () => {});
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address() as AddressInfo;
@@ -113,8 +113,8 @@ test('a configured token requires a matching bearer header', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'dispatch-auth-'));
   const jobs = new DispatchJobs(new FileStorage(join(directory, 'config'), join(directory, 'data')), async () => {});
   await jobs.start();
-  assert.throws(() => createDispatchApp(jobs, async () => [], ''), /token|empty/i);
-  const { app, close } = createDispatchApp(jobs, async () => [], 'secret');
+  assert.throws(() => createDispatchApp(jobs, async () => [], async () => {}, { token: '' }), /token|empty/i);
+  const { app, close } = createDispatchApp(jobs, async () => [], async () => {}, { token: 'secret' });
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
@@ -132,6 +132,100 @@ test('a configured token requires a matching bearer header', async () => {
     assert.equal((await request()).status, 401);
     assert.equal((await request('Bearer wrong')).status, 401);
     assert.equal((await request('Bearer secret')).status, 200);
+  } finally {
+    jobs.stop();
+    await close();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('HTTP messages submit to the requested session and report validation and delivery errors', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'dispatch-message-'));
+  const submitted: Array<{ sessionId: string; text: string }> = [];
+  const jobs = new DispatchJobs(new FileStorage(join(directory, 'config'), join(directory, 'data')), async () => {});
+  await jobs.start();
+  const { app, close } = createDispatchApp(jobs, async () => [], async (sessionId, text) => {
+    if (sessionId === 'offline') throw new Error('No matching Claude session record');
+    submitted.push({ sessionId, text });
+  });
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const send = (sessionId: string, body: unknown) => fetch(`${base}/sessions/${sessionId}/messages`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  try {
+    const accepted = await send('session-1', { text: 'Hello Claude' });
+    assert.equal(accepted.status, 202);
+    assert.deepEqual(await accepted.json(), { status: 'submitted' });
+    assert.deepEqual(submitted, [{ sessionId: 'session-1', text: 'Hello Claude' }]);
+    assert.deepEqual(await jobs.listJobs(), []);
+    assert.deepEqual(await jobs.listRuns(), []);
+
+    const invalid = await send('session-1', { text: '' });
+    assert.equal(invalid.status, 400);
+    assert.match((await invalid.json() as { error: string }).error, /text/i);
+    assert.equal(submitted.length, 1);
+
+    const unavailable = await send('offline', { text: 'Hello' });
+    assert.equal(unavailable.status, 503);
+    assert.match((await unavailable.json() as { error: string }).error, /session record/i);
+    assert.equal(submitted.length, 1);
+  } finally {
+    jobs.stop();
+    await close();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('HTTP messages use the token and allow only a configured artifact origin', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'dispatch-message-auth-'));
+  const submitted: string[] = [];
+  const jobs = new DispatchJobs(new FileStorage(join(directory, 'config'), join(directory, 'data')), async () => {});
+  await jobs.start();
+  const { app, close } = createDispatchApp(jobs, async () => [], async (_sessionId, text) => {
+    submitted.push(text);
+  }, { token: 'secret', browserOrigin: 'http://rubot:1080' });
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/session-1/messages`;
+
+  try {
+    const preflight = await fetch(endpoint, {
+      method: 'OPTIONS',
+      headers: { origin: 'http://rubot:1080', 'access-control-request-method': 'POST' },
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get('access-control-allow-origin'), 'http://rubot:1080');
+    assert.match(preflight.headers.get('access-control-allow-headers') ?? '', /authorization/i);
+
+    const unauthorized = await fetch(endpoint, {
+      method: 'POST',
+      headers: { origin: 'http://rubot:1080', 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hello' }),
+    });
+    assert.equal(unauthorized.status, 401);
+    assert.equal(unauthorized.headers.get('access-control-allow-origin'), 'http://rubot:1080');
+
+    const denied = await fetch(endpoint, {
+      method: 'POST',
+      headers: { origin: 'http://other:1080', authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hello' }),
+    });
+    assert.equal(denied.status, 403);
+
+    const accepted = await fetch(endpoint, {
+      method: 'POST',
+      headers: { origin: 'http://rubot:1080', authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hello' }),
+    });
+    assert.equal(accepted.status, 202);
+    assert.deepEqual(submitted, ['hello']);
   } finally {
     jobs.stop();
     await close();

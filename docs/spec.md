@@ -1,6 +1,6 @@
 # Dispatch
 
-Dispatch schedules messages to running Claude Code sessions on the same machine. Agents use MCP tools to find sessions, manage jobs, send a job immediately, and inspect runs. A background service owns the schedule, so jobs remain scheduled after the session that created them closes.
+Dispatch schedules messages to running Claude Code sessions on the same machine. Agents use MCP tools to find sessions, manage jobs, send a job immediately, and inspect runs. An HTTP route also accepts an immediate message for a specified session. A background service owns the schedule, so jobs remain scheduled after the session that created them closes.
 
 ## How it works
 
@@ -32,7 +32,7 @@ Claude Code may deliver, hold for approval, or refuse an inbound message. A succ
 
 Dispatch is one Node.js/TypeScript process. It serves MCP tools over Streamable HTTP on `127.0.0.1`, owns the schedule and stored data, and sends messages to Claude Code sockets. Claude Code connects directly to the server, which stays running after Claude Code sessions close. [Claude Code supports HTTP MCP servers](https://code.claude.com/docs/en/mcp#option-1-add-a-remote-http-server).
 
-The HTTP endpoint and tool input validation use the [official MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) (`@modelcontextprotocol/server`, `@modelcontextprotocol/express`, and `@modelcontextprotocol/node`), `express`, and `zod`. [Croner](https://github.com/Hexagon/croner) (`croner`) parses the five-field cron expressions and calculates future run times. Dispatch loads saved jobs when it starts. Node.js built-ins handle JSON files, the `claude agents --json` command, and Unix socket messages. The HTTP endpoint requires no token by default. When `DISPATCH_TOKEN` is set, every MCP request must carry the matching Bearer token; an empty value is rejected. Claude Code connects through a user-scoped MCP registration. A service manager keeps Dispatch running after Claude Code sessions close.
+The HTTP endpoints and tool input validation use the [official MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) (`@modelcontextprotocol/server`, `@modelcontextprotocol/express`, and `@modelcontextprotocol/node`), `express`, and `zod`. [Croner](https://github.com/Hexagon/croner) (`croner`) parses the five-field cron expressions and calculates future run times. Dispatch loads saved jobs when it starts. Node.js built-ins handle JSON files, the `claude agents --json` command, and Unix socket messages. The server requires no token by default. When `DISPATCH_TOKEN` is set, MCP and message requests must carry the matching Bearer token; an empty value is rejected. Claude Code connects through a user-scoped MCP registration. A service manager keeps Dispatch running after Claude Code sessions close.
 
 ## Data storage
 
@@ -157,6 +157,19 @@ list_runs(input?: { job_id?: string; limit?: number }): Run[];
 ~~~
 
 Returns recent runs, newest first. `job_id` filters to one job. `limit` must be a positive integer and defaults to 100.
+
+## HTTP messages
+
+~~~http
+POST /sessions/{session_id}/messages
+Content-Type: application/json
+
+{"text":"Hello Claude"}
+~~~
+
+This route submits the text to the named Claude Code session immediately. `session_id` and `text` must be nonempty. A successful socket write returns HTTP 202 with `{"status":"submitted"}`. This does not confirm that Claude Code delivered or acted on the message. A validation error returns 400; an unavailable session or failed socket write returns 503 with an `error` string. When `DISPATCH_TOKEN` is set, the route requires the same Bearer token as MCP and returns 401 without it. Immediate messages do not create jobs or run-log entries.
+
+When `DISPATCH_BROWSER_ORIGIN` is set to one exact HTTP or HTTPS origin, Dispatch returns CORS headers for that origin and answers its preflight requests for this route. The Bearer token requirement still applies when `DISPATCH_TOKEN` is set.
 
 ## Out of scope
 
